@@ -1,0 +1,84 @@
+---
+- name : download and unarchive
+  ansible.builtin.unarchive:
+    src : "{{ prometheus_url }}"
+    dest : /home/ansible/
+    remote_src : true
+
+- name: Add Prometheus user
+  user:
+    name: prometheus
+    shell: /bin/false
+
+- name: Create Prometheus directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+  with_items:
+    - /etc/prometheus
+    - /var/lib/prometheus
+
+- name: Create prometheus rules directory
+  file:
+    path: /etc/prometheus/rules
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+
+- name: Move Prometheus binaries
+  shell: "mv /home/ansible/prometheus-{{ prometheus_version }}.linux-amd64/{prometheus,promtool} /usr/local/bin/"
+
+- name: Set ownership of Prometheus binaries
+  file:
+    path: "{{ item }}"
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+  with_items:
+    - /usr/local/bin/prometheus
+    - /usr/local/bin/promtool
+
+############### prometheus.yml.j2 ##
+- name: Configure Prometheus from template
+  ansible.builtin.template:
+    src: prometheus.yml.j2  # 템플릿 경로
+    dest: /etc/prometheus/prometheus.yml  # 템플릿이 렌더링될 대상 경로
+    owner: prometheus
+    group: prometheus
+    mode: '0644'
+
+
+- name : install components
+  import_tasks: components.yml
+
+############ alertmanager.yml.j2
+- name: Create Prometheus systemd service file
+  copy:
+    dest: /etc/systemd/system/prometheus.service
+    content: |
+      [Unit]
+      Description=Prometheus
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      User=prometheus
+      Group=prometheus
+      Type=simple
+      ExecStart=/usr/local/bin/prometheus --config.file /etc/prometheus/prometheus.yml --storage.tsdb.path /var/lib/prometheus/
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Reload systemd
+  command: systemctl daemon-reload
+
+- name: Enable and restart Prometheus service
+  service:
+    name: prometheus
+    enabled: true
+    state: restarted
+
